@@ -5,3 +5,6 @@ scikit-learn
 matplotlib
 joblib
 imbalanced-learn 
+langgraph
+langchain-groq
+fpdf2
