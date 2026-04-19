@@ -27,35 +27,36 @@ if uploaded_file is not None:
             try:
                 import joblib
                 
-                # 1. LOAD THE TRAINED MODEL
-                # Ensure 'noshow_model.pkl' is in the same directory as this script
+                # 1. LOAD THE TRAINED MODEL AND SCALER
                 model = joblib.load('noshow_model.pkl')
+                scaler = joblib.load('scaler.pkl') # NEW: Load the scaler
                 
-                # 2. PREPROCESS THE UPLOADED DATA (Must match Colab training exactly)
-                # We make a copy so we don't ruin the original df used for displaying
+                # 2. PREPROCESS THE UPLOADED DATA
                 X = df.copy()
                 
-                # Calculate LeadDays
-                # Calculate LeadDays (Safe Datetime handling)
+                # Align column typos to match the training script
+                X.rename(columns={'Hipertension': 'Hypertension', 'Handcap': 'Handicap'}, inplace=True)
+                
+                # Calculate WaitDays
                 sched_dt = pd.to_datetime(X['ScheduledDay'])
                 appt_dt = pd.to_datetime(X['AppointmentDay'])
+                X['WaitDays'] = (appt_dt.dt.normalize() - sched_dt.dt.normalize()).dt.days
                 
-                # Normalize removes the time (sets to midnight) so we only calculate the difference in pure days
-                X['LeadDays'] = (appt_dt.dt.normalize() - sched_dt.dt.normalize()).dt.days
-                # Encode Gender
-                X['Gender'] = X['Gender'].map({'M': 0, 'F': 1})
+                # Prevent negative WaitDays (fixes anomalies in new uploaded data)
+                X.loc[X['WaitDays'] < 0, 'WaitDays'] = 0
                 
-                # Drop columns the model hasn't seen
-                cols_to_drop = ['PatientId', 'AppointmentID', 'Neighbourhood', 'ScheduledDay', 'AppointmentDay']
-                # If the Kaggle dataset still has the answer key, drop it so we don't cheat!
-                if 'No-show' in X.columns:
-                    cols_to_drop.append('No-show')
+                # Encode Gender (Must match training script exactly: M=1, F=0)
+                X['Gender'] = X['Gender'].map({'M': 1, 'F': 0})
                 
-                X = X.drop(columns=cols_to_drop, errors='ignore')
+                # Enforce the exact column order the Scaler expects
+                expected_cols = ['Gender', 'Age', 'Scholarship', 'Hypertension', 'Diabetes', 'Alcoholism', 'Handicap', 'SMS_received', 'WaitDays']
+                X = X[expected_cols]
                 
-                # 3. RUN REAL PREDICTIONS
-                # predict_proba gets the actual % confidence, [:, 1] gets the probability of class 1 (No-Show)
-                probabilities = model.predict_proba(X)[:, 1] 
+                # 3. SCALE THE DATA
+                X_scaled = scaler.transform(X)
+                
+                # 4. RUN REAL PREDICTIONS ON SCALED DATA
+                probabilities = model.predict_proba(X_scaled)[:, 1] 
                 
                 # Assign results back to the original dataframe for display
                 df['No-Show Probability'] = (probabilities * 100).round(2).astype(str) + '%'
@@ -70,6 +71,7 @@ if uploaded_file is not None:
                     color = '#ffcccc' if val == 'High Risk' else ''
                     return f'background-color: {color}'
                 
+                # Display the results
                 cols = ['Risk Level', 'No-Show Probability'] + [c for c in df.columns if c not in ['Risk Level', 'No-Show Probability']]
                 st.dataframe(df[cols].head(50).style.map(highlight_high_risk, subset=['Risk Level']))
 
@@ -78,13 +80,11 @@ if uploaded_file is not None:
                 st.subheader("Key Contributing Factors")
                 st.markdown("These are the actual factors driving the model's predictions based on the Decision Tree:")
                 
-                # Extract real feature importances from the loaded model
                 importances = model.feature_importances_
                 feature_names = X.columns
                 
-                # Create a dataframe and sort it
                 importance_df = pd.DataFrame({'Feature': feature_names, 'Importance': importances})
-                importance_df = importance_df.sort_values(by='Importance', ascending=True) # Ascending for horizontal bar chart
+                importance_df = importance_df.sort_values(by='Importance', ascending=True) 
                 
                 fig, ax = plt.subplots(figsize=(8, 4))
                 ax.barh(importance_df['Feature'], importance_df['Importance'], color='#4CAF50')
@@ -93,7 +93,7 @@ if uploaded_file is not None:
                 st.pyplot(fig)
                 
             except FileNotFoundError:
-                st.error("🚨 Error: 'noshow_model.pkl' not found! Make sure the Data Scientist's model file is in the same folder as this script.")
+                st.error("🚨 Error: 'noshow_model.pkl' or 'scaler.pkl' not found! Make sure both files are in the same folder as this script.")
             except Exception as e:
                 st.error(f"🚨 An error occurred during prediction: {e}")
 else:
